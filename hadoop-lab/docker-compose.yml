@@ -1,0 +1,145 @@
+# ---------------------------------------------------------------------------
+# Lab 1 - Hadoop cluster (HDFS + YARN + MapReduce) with Docker Compose
+# Images : bde2020/hadoop-*:2.0.0-hadoop3.2.1-java8  (Hadoop 3.2.1)
+#          one image per role, all sharing the same base layers (small download)
+# Usage  : docker compose up -d          -> start the 6 core containers
+#          docker compose --profile ft down -v   -> remove everything
+# Do not modify this file unless the instructions tell you to.
+# ---------------------------------------------------------------------------
+
+# Hadoop configuration, shared by every container.
+# Naming rule used by the images: CORE_CONF_ / HDFS_CONF_ / YARN_CONF_ /
+# MAPRED_CONF_ + property name where "." becomes "_" and "-" becomes "___".
+x-hadoop-env: &hadoop-env
+  # --- HDFS -----------------------------------------------------------------
+  CORE_CONF_fs_defaultFS: "hdfs://namenode:8020"          # where the NameNode is
+  CORE_CONF_hadoop_http_staticuser_user: "root"
+  HDFS_CONF_dfs_webhdfs_enabled: "true"
+  HDFS_CONF_dfs_permissions_enabled: "false"              # no HDFS permissions in the lab
+  HDFS_CONF_dfs_namenode_datanode_registration_ip___hostname___check: "false"
+  HDFS_CONF_dfs_replication: "2"                          # each block is stored twice
+  HDFS_CONF_dfs_namenode_heartbeat_recheck___interval: "10000"   # DataNode dead after ~50 s (default 10.5 min)
+  # --- YARN -----------------------------------------------------------------
+  YARN_CONF_yarn_resourcemanager_hostname: "resourcemanager"
+  YARN_CONF_yarn_nodemanager_aux___services: "mapreduce_shuffle"
+  YARN_CONF_yarn_nodemanager_resource_memory___mb: "1536"        # memory offered by each NodeManager
+  YARN_CONF_yarn_scheduler_minimum___allocation___mb: "256"
+  YARN_CONF_yarn_scheduler_maximum___allocation___mb: "1536"
+  YARN_CONF_yarn_scheduler_capacity_maximum___am___resource___percent: "0.5"
+  YARN_CONF_yarn_nodemanager_vmem___check___enabled: "false"
+  YARN_CONF_yarn_nm_liveness___monitor_expiry___interval___ms: "30000"  # NodeManager lost after 30 s (default 10 min)
+  YARN_CONF_yarn_log___aggregation___enable: "true"
+  # --- MapReduce (small containers so that the lab runs on a laptop) --------
+  MAPRED_CONF_mapreduce_framework_name: "yarn"
+  MAPRED_CONF_yarn_app_mapreduce_am_env: "HADOOP_MAPRED_HOME=/opt/hadoop-3.2.1/"
+  MAPRED_CONF_mapreduce_map_env: "HADOOP_MAPRED_HOME=/opt/hadoop-3.2.1/"
+  MAPRED_CONF_mapreduce_reduce_env: "HADOOP_MAPRED_HOME=/opt/hadoop-3.2.1/"
+  MAPRED_CONF_yarn_app_mapreduce_am_resource_mb: "512"
+  MAPRED_CONF_yarn_app_mapreduce_am_command___opts: "-Xmx400m"
+  MAPRED_CONF_mapreduce_map_memory_mb: "512"
+  MAPRED_CONF_mapreduce_map_java_opts: "-Xmx400m"
+  MAPRED_CONF_mapreduce_reduce_memory_mb: "512"
+  MAPRED_CONF_mapreduce_reduce_java_opts: "-Xmx400m"
+
+services:
+
+  # ===== HDFS master ========================================================
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    platform: linux/amd64
+    container_name: namenode
+    hostname: namenode
+    ports:
+      - "9870:9870"                  # NameNode web UI
+    environment:
+      <<: *hadoop-env
+      CLUSTER_NAME: "test-cluster"
+    networks: [hadoop-net]
+
+  # ===== YARN master ========================================================
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    platform: linux/amd64
+    container_name: resourcemanager
+    hostname: resourcemanager
+    ports:
+      - "8088:8088"                  # ResourceManager web UI
+    environment:
+      <<: *hadoop-env
+      SERVICE_PRECONDITION: "namenode:8020 namenode:9870"
+    depends_on: [namenode]
+    networks: [hadoop-net]
+
+  # ===== Worker 1 : DataNode + NodeManager ==================================
+  datanode1:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    platform: linux/amd64
+    container_name: datanode1
+    hostname: datanode1
+    environment:
+      <<: *hadoop-env
+      SERVICE_PRECONDITION: "namenode:9870"
+    depends_on: [namenode]
+    networks: [hadoop-net]
+
+  nodemanager1:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    platform: linux/amd64
+    container_name: nodemanager1
+    hostname: nodemanager1
+    environment:
+      <<: *hadoop-env
+      SERVICE_PRECONDITION: "namenode:8020 namenode:9870 resourcemanager:8088"
+    depends_on: [namenode, resourcemanager]
+    networks: [hadoop-net]
+
+  # ===== Worker 2 : DataNode + NodeManager ==================================
+  datanode2:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    platform: linux/amd64
+    container_name: datanode2
+    hostname: datanode2
+    environment:
+      <<: *hadoop-env
+      SERVICE_PRECONDITION: "namenode:9870"
+    depends_on: [namenode]
+    networks: [hadoop-net]
+
+  nodemanager2:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    platform: linux/amd64
+    container_name: nodemanager2
+    hostname: nodemanager2
+    environment:
+      <<: *hadoop-env
+      SERVICE_PRECONDITION: "namenode:8020 namenode:9870 resourcemanager:8088"
+    depends_on: [namenode, resourcemanager]
+    networks: [hadoop-net]
+
+  # ===== Worker 3 : only used in the optional fault-tolerance part ==========
+  # Not started by "docker compose up -d" (profile "ft").
+  datanode3:
+    profiles: ["ft"]
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    platform: linux/amd64
+    container_name: datanode3
+    hostname: datanode3
+    environment:
+      <<: *hadoop-env
+      SERVICE_PRECONDITION: "namenode:9870"
+    networks: [hadoop-net]
+
+  nodemanager3:
+    profiles: ["ft"]
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    platform: linux/amd64
+    container_name: nodemanager3
+    hostname: nodemanager3
+    environment:
+      <<: *hadoop-env
+      SERVICE_PRECONDITION: "namenode:8020 namenode:9870 resourcemanager:8088"
+    networks: [hadoop-net]
+
+networks:
+  hadoop-net:
+    name: hadoop-net
